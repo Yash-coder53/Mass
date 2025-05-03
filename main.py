@@ -1,13 +1,15 @@
 import os
 import csv
-import time
 import asyncio
 import random
 import requests
 import sqlite3
-from telethon.sync import TelegramClient
+
+from telethon import TelegramClient
 from telethon.errors import (
-    FloodWaitError, PhoneNumberBannedError, SessionPasswordNeededError
+    FloodWaitError,
+    PhoneNumberBannedError,
+    SessionPasswordNeededError
 )
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import (
@@ -21,13 +23,11 @@ from telethon.tl.types import (
 )
 
 # TELEGRAM API CREDENTIALS
-API_ID = 27157163  
+API_ID = 27157163
 API_HASH = "e0145db12519b08e1d2f5628e2db18c4"
-
-# BOT API
 BOT_API = "7588614459:AAHPU7D7LrwuOS51qscgNsiGamzLT9wVpRw"
 
-# REQUIRED FILES
+# FILES
 ACCOUNTS_FILE = "accounts.txt"
 SELECT_MSG_FILE = "select_msg.csv"
 SAVE_REPORT_FILE = "save_report.csv"
@@ -56,10 +56,9 @@ BANNER = """
 """
 
 async def send_bot_notification(client, target, message_count):
-    """Sends a confirmation message to the logged-in account."""
+    """Send notification to user via Telegram Bot API"""
     me = await client.get_me()
-    chat_id = me.id  # Get the logged-in account's chat ID
-
+    chat_id = me.id
     text = (
         f"✔ **Report Successful!**\n"
         f"♔ **Target:** `{target}`\n"
@@ -81,7 +80,7 @@ async def send_bot_notification(client, target, message_count):
         print(f"✗ Error sending notification: {e}")
 
 async def report_messages(client, target_username, reason_key, message_urls, report_count):
-    """Reports selected messages from a Telegram channel/group."""
+    """Report messages for a given reason"""
     reason_text, reason_type = REPORT_REASONS[reason_key]
 
     print(f"\n♕ Target: {target_username}")
@@ -96,28 +95,32 @@ async def report_messages(client, target_username, reason_key, message_urls, rep
     for msg_url in message_urls:
         try:
             msg_id = int(msg_url.split("/")[-1])  # Extract message ID
+
             for i in range(report_count):
-                await client(ReportPeerRequest(entity, reason_type, f"Violation report {i+1}"))
-                print(f"✓ Report {i+1}/{report_count} sent for message: {msg_id}")
-                time.sleep(random.uniform(2, 5))  
+                await client(ReportPeerRequest(
+                    peer=entity,
+                    reason=reason_type,
+                    message=f"Violation report {i + 1}"
+                ))
+                print(f"✓ Report {i + 1}/{report_count} sent for message: {msg_id}")
+                await asyncio.sleep(random.uniform(2, 5))
 
             with open(SAVE_REPORT_FILE, "a", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow([target_username, msg_url, reason_text, "Success"])
 
         except FloodWaitError as e:
-            print(f"✗ Flood Wait! Switching accounts in {e.seconds} seconds...")
-            time.sleep(e.seconds)
+            print(f"✗ Flood Wait! Sleeping for {e.seconds} seconds...")
+            await asyncio.sleep(e.seconds)
             break
         except Exception as e:
             print(f"✗ Error reporting message {msg_url}: {e}")
             break
 
-    # Send bot notification
     await send_bot_notification(client, target_username, len(message_urls))
 
 async def login_and_report(phone, target_username, reason_key, message_urls, report_count):
-    """Handles login and reporting for a single account."""
+    """Login and handle report from each account"""
     session_file = f"sessions/{phone.replace('+', '')}.session"
 
     if os.path.exists(session_file):
@@ -135,17 +138,20 @@ async def login_and_report(phone, target_username, reason_key, message_urls, rep
             await client.start(phone)
             print(f"✓ Logged in with {phone}")
             await report_messages(client, target_username, reason_key, message_urls, report_count)
+
     except sqlite3.OperationalError:
-        print(f"✗ Session database error for {phone}. Deleting and retrying...")
-        os.remove(session_file)
+        print(f"✗ Session DB error for {phone}. Deleting and retrying...")
+        if os.path.exists(session_file):
+            os.remove(session_file)
         return await login_and_report(phone, target_username, reason_key, message_urls, report_count)
+
     except PhoneNumberBannedError:
         print(f"✗ Account {phone} is banned! Skipping...")
     except SessionPasswordNeededError:
-        print(f"✗ Account {phone} requires a password! Enter it manually.")
+        print(f"✗ Account {phone} requires 2FA password! Enter it manually.")
 
 async def main():
-    """Main function to initiate mass reporting."""
+    """Main entry point"""
     print(BANNER)
 
     if not os.path.exists(ACCOUNTS_FILE):
@@ -170,7 +176,11 @@ async def main():
         print("✗ Invalid selection! Enter a number between 1-10.")
         reason_key = input("Enter Report Reason (1-10): ").strip()
 
-    report_count = int(input("How many messages to report?: "))
+    try:
+        report_count = int(input("How many messages to report?: "))
+    except ValueError:
+        print("✗ Invalid number.")
+        return
 
     if not os.path.exists(SELECT_MSG_FILE):
         print(f"✗ Error: {SELECT_MSG_FILE} not found!")
@@ -189,4 +199,8 @@ async def main():
         print(f"\n♛ Logging in with account: {phone}")
         await login_and_report(phone, target_username, reason_key, message_urls, report_count)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n✗ Program interrupted by user.")
